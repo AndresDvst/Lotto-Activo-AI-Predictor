@@ -1,0 +1,531 @@
+{
+  "name": "Lotto Activo Gemma",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const ANIMALITOS = {\n  \"0\": \"Delfin\", \"00\": \"Ballena\", \"1\": \"Carnero\", \"2\": \"Toro\",\n  \"3\": \"Ciempies\", \"4\": \"Alacran\", \"5\": \"Leon\", \"6\": \"Rana\",\n  \"7\": \"Perico\", \"8\": \"Raton\", \"9\": \"Aguila\", \"10\": \"Tigre\",\n  \"11\": \"Gato\", \"12\": \"Caballo\", \"13\": \"Mono\", \"14\": \"Paloma\",\n  \"15\": \"Zorro\", \"16\": \"Oso\", \"17\": \"Pavo\", \"18\": \"Burro\",\n  \"19\": \"Chivo\", \"20\": \"Cochino\", \"21\": \"Gallo\", \"22\": \"Camello\",\n  \"23\": \"Cebra\", \"24\": \"Iguana\", \"25\": \"Gallina\", \"26\": \"Vaca\",\n  \"27\": \"Perro\", \"28\": \"Zamuro\", \"29\": \"Elefante\", \"30\": \"Caiman\",\n  \"31\": \"Lapa\", \"32\": \"Ardilla\", \"33\": \"Pescado\", \"34\": \"Venado\",\n  \"35\": \"Jirafa\", \"36\": \"Culebra\"\n};\n\nconst items = $input.all();\nconst resultados = [];\n\nfor (const item of items) {\n  const html = item.json.data || item.json.body || \"\";\n  \n  // 1. Extraer fecha del datepicker o del título\n  let fechaPagina = \"\";\n  const fechaMatch = html.match(/id=\"datepicker\"[^>]*value=\"(\\d{4}-\\d{2}-\\d{2})\"/);\n  if (fechaMatch) {\n    fechaPagina = fechaMatch[1];\n  } else {\n    const tituloMatch = html.match(/el dia <strong>(\\d{1,2}) de ([a-z]+) de (\\d{4})/i);\n    if (tituloMatch) {\n      const meses = {enero:'01',febrero:'02',marzo:'03',abril:'04',mayo:'05',junio:'06',\n                     julio:'07',agosto:'08',septiembre:'09',octubre:'10',noviembre:'11',diciembre:'12'};\n      const mes = meses[tituloMatch[2].toLowerCase()];\n      if (mes) fechaPagina = `${tituloMatch[3]}-${mes}-${tituloMatch[1].padStart(2,'0')}`;\n    }\n  }\n  if (!fechaPagina) continue; // Saltar si no hay fecha\n  \n  // 2. Buscar todos los bloques de sorteos manualmente (contando profundidad de divs)\n  const inicioBloque = '<div class=\"col-sm-6 col-md-4 col-lg-16 mb-5\">';\n  let pos = 0;\n  while ((pos = html.indexOf(inicioBloque, pos)) !== -1) {\n    const start = pos + inicioBloque.length;\n    // Encontrar el cierre del div principal (al mismo nivel)\n    let depth = 1;\n    let end = start;\n    while (depth > 0 && end < html.length) {\n      const nextOpen = html.indexOf('<div', end);\n      const nextClose = html.indexOf('</div>', end);\n      if (nextClose === -1) break;\n      if (nextOpen !== -1 && nextOpen < nextClose) {\n        depth++;\n        end = nextOpen + 4; // avanzar después de '<div'\n      } else {\n        depth--;\n        end = nextClose + 6; // avanzar después de '</div>'\n      }\n    }\n    const bloque = html.substring(start, end - 6); // contenido sin el </div> final\n    pos = end;\n    \n    // 3. Extraer número y animal del <h4>\n    const h4Match = bloque.match(/<h4[^>]*>(\\d{1,2}|00)\\s+([a-zA-Záéíóúñ]+)<\\/h4>/i);\n    if (!h4Match) continue;\n    const numero = h4Match[1];\n    const animalNombre = ANIMALITOS[numero] || h4Match[2];\n    \n    // 4. Extraer hora del <h5>\n    const h5Match = bloque.match(/<h5[^>]*>(?:Lotto Activo\\s*)?(\\d{1,2}:\\d{2}\\s*[AP]M)/i);\n    if (!h5Match) continue;\n    const hora = h5Match[1].toUpperCase();\n    \n    // 5. Determinar franja horaria\n    let franja = \"tarde\";\n    const h = parseInt(hora.split(\":\")[0]);\n    if (hora.includes(\"AM\")) franja = \"mañana\";\n    else if (h >= 5 && h !== 12) franja = \"noche\";\n    \n    resultados.push({\n      json: {\n        loteria: \"Lotto Activo\",\n        fecha: fechaPagina,\n        hora: hora,\n        franja: franja,\n        numero: numero,\n        animal: animalNombre\n      }\n    });\n  }\n}\n\n// 6. Ordenar por fecha y hora (ascendente: antiguo → reciente)\nresultados.sort((a, b) => {\n  const dateA = new Date(`${a.json.fecha} ${a.json.hora.replace(/(AM|PM)/, ' $1')}`);\n  const dateB = new Date(`${b.json.fecha} ${b.json.hora.replace(/(AM|PM)/, ' $1')}`);\n  return dateA - dateB;\n});\n\nreturn resultados.length > 0 ? resultados : [{ json: { error: \"No se encontraron datos reales.\" } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5888,
+        -1216
+      ],
+      "id": "86bb5975-12d0-4300-9655-cf442e7b5c98",
+      "name": "Setear DatosLG"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ════════════════════════════════════════════════\n// SETEAR ESTADÍSTICAS — Lotto Activo (mejorado)\n// ════════════════════════════════════════════════\n\nconst items = $input.all();\nlet datos = items.map(i => i.json).filter(d => !d.error && d.fecha && d.hora && d.numero !== undefined);\n\nif (datos.length === 0) {\n  return [{ json: { error: 'No hay datos para procesar' } }];\n}\n\n// ── Universo oficial Lotto Activo: 0, 00, 1-36 (38 números) ──\nconst UNIVERSO = [\"0\", \"00\", ...Array.from({length: 36}, (_, i) => (i + 1).toString())];\nconst N_UNIVERSO = UNIVERSO.length; // 38\n\n// ── Función para convertir hora a timestamp comparable ──\nfunction horaAMs(horaStr, fecha) {\n  // Normaliza \"8:00 AM\", \"08AM\", \"08:00AM\", etc.\n  const limpia = horaStr.trim().replace(/(\\d)(AM|PM)/i, '$1 $2').replace(/\\./g,'');\n  return new Date(`${fecha} ${limpia}`);\n}\n\n// ── 1. Ordenar ASCENDENTE (más antiguo primero) ──\ndatos.sort((a, b) => horaAMs(a.hora, a.fecha) - horaAMs(b.hora, b.fecha));\n\n// ── 2. Frecuencias globales ──\nconst frecNumero = {};\nUNIVERSO.forEach(n => frecNumero[n] = 0);\n\ndatos.forEach(d => {\n  const n = String(d.numero).trim();\n  if (frecNumero.hasOwnProperty(n)) frecNumero[n]++;\n});\n\n// ── 3. Top/Bottom (clonar para evitar mutación del mismo array) ──\nconst entradasFrecuencia = Object.entries(frecNumero);\n\nconst top5 = [...entradasFrecuencia]\n  .sort((a, b) => b[1] - a[1])\n  .slice(0, 5)\n  .map(([num, veces]) => ({ numero: num, veces }));\n\nconst bottom5 = [...entradasFrecuencia]\n  .filter(([, c]) => c > 0)          // excluye los que nunca salieron\n  .sort((a, b) => a[1] - b[1])\n  .slice(0, 5)\n  .map(([num, veces]) => ({ numero: num, veces }));\n\nconst numerosInactivos = entradasFrecuencia\n  .filter(([, c]) => c === 0)\n  .map(([n]) => n);\n\nconst frecOrdenada = [...entradasFrecuencia]\n  .filter(([, c]) => c > 0)\n  .sort((a, b) => b[1] - a[1])\n  .map(([num, count]) => `${num}:${count}`)\n  .join(', ');\n\n// ── 4. Días sin salir por número ──\n// Obtener la fecha más reciente en los datos\nconst fechaMax = datos[datos.length - 1].fecha;\n\n// Para cada número, buscar la última vez que salió\nconst ultimaAparicion = {};\nUNIVERSO.forEach(n => ultimaAparicion[n] = null);\n\ndatos.forEach(d => {\n  const n = String(d.numero).trim();\n  if (ultimaAparicion.hasOwnProperty(n)) {\n    // Como está ordenado ASC, la última asignación es la más reciente\n    ultimaAparicion[n] = d.fecha;\n  }\n});\n\nconst diasSinSalir = {};\nUNIVERSO.forEach(n => {\n  if (!ultimaAparicion[n]) {\n    diasSinSalir[n] = 999; // nunca salió\n  } else {\n    const diff = new Date(fechaMax) - new Date(ultimaAparicion[n]);\n    diasSinSalir[n] = Math.floor(diff / (1000 * 60 * 60 * 24));\n  }\n});\n\n// Enjaulados ordenados por días sin salir (descendente)\nconst enjauladosTodos = UNIVERSO\n  .map(n => ({ numero: n, dias: diasSinSalir[n] }))\n  .filter(e => e.dias > 0)\n  .sort((a, b) => b.dias - a.dias);\n\n// Solo los críticos (>5 días) para el prompt\nconst enjauladosCriticos = enjauladosTodos\n  .filter(e => e.dias > 5)\n  .map(e => `${e.numero}(${e.dias}d)`)\n  .join(', ');\n\n// Formato completo para el prompt (igual al original pero con días reales)\nconst enjauladosTexto = enjauladosTodos\n  .map(e => `${e.numero}(${e.dias}d)`)\n  .join(', ');\n\n// ── 5. Frecuencia por FRANJA horaria (mañana/tarde/noche) ──\nconst frecFranja = { mañana: {}, tarde: {}, noche: {} };\nObject.keys(frecFranja).forEach(f => {\n  UNIVERSO.forEach(n => { frecFranja[f][n] = 0; });\n});\n\ndatos.forEach(d => {\n  const n = String(d.numero).trim();\n  const f = d.franja;\n  if (frecFranja[f] && frecFranja[f].hasOwnProperty(n)) {\n    frecFranja[f][n]++;\n  }\n});\n\nconst frecHorariaTexto = Object.entries(frecFranja)\n  .map(([franja, freq]) => {\n    const top3 = Object.entries(freq)\n      .filter(([, c]) => c > 0)\n      .sort((a, b) => b[1] - a[1])\n      .slice(0, 3)\n      .map(([n, c]) => `${n}(${c}x)`)\n      .join(', ');\n    return `${franja}: top3=[${top3}]`;\n  })\n  .join(' | ');\n\n// ── 6. Frecuencia por HORA EXACTA (08AM, 09AM … 07PM) ──\nconst HORAS_EXACTAS = [\"08AM\",\"09AM\",\"10AM\",\"11AM\",\"12PM\",\"01PM\",\"02PM\",\"03PM\",\"04PM\",\"05PM\",\"06PM\",\"07PM\"];\n\nconst frecHoraExacta = {};\nHORAS_EXACTAS.forEach(h => {\n  frecHoraExacta[h] = {};\n  UNIVERSO.forEach(n => { frecHoraExacta[h][n] = 0; });\n});\n\ndatos.forEach(d => {\n  const n = String(d.numero).trim();\n  // Normalizar hora al formato \"08AM\"\n  const horaRaw = d.hora.trim().toUpperCase().replace(/\\s/g,'').replace(':00','');\n  const horaKey = horaRaw.replace(/^(\\d)([AP]M)$/, '0$1$2'); // \"8AM\" → \"08AM\"\n  if (frecHoraExacta[horaKey] && frecHoraExacta[horaKey].hasOwnProperty(n)) {\n    frecHoraExacta[horaKey][n]++;\n  }\n});\n\n// Top 3 por hora exacta\nconst frecHoraExactaResumen = {};\nHORAS_EXACTAS.forEach(h => {\n  frecHoraExactaResumen[h] = Object.entries(frecHoraExacta[h])\n    .filter(([, c]) => c > 0)\n    .sort((a, b) => b[1] - a[1])\n    .slice(0, 3)\n    .map(([n, c]) => `${n}(${c}x)`);\n});\n\n// ── 7. Pares consecutivos — SOLO dentro del mismo día ──\n// CORRECCIÓN CLAVE: el original cruzaba el último sorteo del día N\n// con el primero del día N+1, generando pares fantasma.\nconst pares = {};\nfor (let i = 0; i < datos.length - 1; i++) {\n  // Solo contar si los dos sorteos son del mismo día\n  if (datos[i].fecha === datos[i + 1].fecha) {\n    const key = `${datos[i].numero}->${datos[i+1].numero}`;\n    pares[key] = (pares[key] || 0) + 1;\n  }\n}\n\nconst paresSignificativos = Object.entries(pares)\n  .filter(([, v]) => v >= 2)\n  .sort((a, b) => b[1] - a[1])\n  .slice(0, 10)\n  .map(([par, count]) => `${par}: ${count}x`)\n  .join(', ') || 'Ninguno significativo';\n\n// ── 8. Serie temporal — orden MÁS ANTIGUO → más reciente (correcto para la IA) ──\nconst CANT_SERIE = 50;\nconst serieTemporal = datos\n  .slice(-CANT_SERIE)\n  .map(d => d.numero)\n  .join(', ');\n\n// ── 9. Chi² (correcto: grados de libertad = N_UNIVERSO - 1 = 37) ──\nconst total = datos.length;\nconst esperado = total / N_UNIVERSO;\nlet chiCuadrado = 0;\nObject.values(frecNumero).forEach(obs => {\n  chiCuadrado += Math.pow(obs - esperado, 2) / (esperado || 1);\n});\n\n// Chi² crítico para gl=37, p=0.05 → 52.19\nconst CHI_CRITICO = 52.19;\nconst esAleatorio = chiCuadrado < CHI_CRITICO;\n\n// ── 10. BASELINE ALEATORIO ──\n// ¿Cuántos aciertos obtiene una predicción aleatoria de 12 números\n// comparada contra 12 resultados reales (uno por hora exacta)?\n// Métrica honesta: acierto = mismo número en la misma posición/hora.\nconst SIMULACIONES = 10000;\nlet totalAciertosAleatorios = 0;\n\n// Tomar los últimos 12 sorteos reales como referencia\nconst ultimos12Reales = datos.slice(-12).map(d => String(d.numero));\n\nfor (let s = 0; s < SIMULACIONES; s++) {\n  for (let pos = 0; pos < 12; pos++) {\n    const aleatorio = UNIVERSO[Math.floor(Math.random() * N_UNIVERSO)];\n    if (aleatorio === ultimos12Reales[pos]) totalAciertosAleatorios++;\n  }\n}\n\nconst tasaBaselineAleatorio = (totalAciertosAleatorios / (SIMULACIONES * 12));\nconst aciertosEsperadosPorDia = (tasaBaselineAleatorio * 12).toFixed(3);\n\n// ── 11. Fechas del rango ──\nconst fechaInicio = datos[0]?.fecha;\nconst fechaFin    = datos[datos.length - 1]?.fecha;\n\n// ════════════════════════════════════════════════\n// OUTPUT\n// ════════════════════════════════════════════════\nreturn [{\n  json: {\n    // Metadatos\n    total_registros:        total,\n    fecha_inicio:           fechaInicio,\n    fecha_fin:              fechaFin,\n    numeros_activos:        entradasFrecuencia.filter(([,c]) => c > 0).length,\n    numeros_inexistentes:   numerosInactivos,\n\n    // Para el prompt de la IA\n    ultimos_resultados:     serieTemporal,          // orden: reciente→antiguo\n    frecuencia_numeros:     frecOrdenada,\n    frecuencia_horaria:     frecHorariaTexto,\n    pares_consecutivos:     paresSignificativos,\n    top5_mas_frecuentes:    top5,\n    top5_menos_frecuentes:  bottom5,\n\n    // Enjaulados\n    enjaulados_todos:       enjauladosTexto,\n    enjaulados_criticos:    enjauladosCriticos,     // solo >5 días\n\n    // Nuevo: desglose por hora exacta\n    frecuencia_hora_exacta: frecHoraExactaResumen,\n\n    // Chi²\n    chi_cuadrado:           chiCuadrado.toFixed(2),\n    chi_grados_libertad:    N_UNIVERSO - 1,\n    parece_aleatorio:       esAleatorio,\n    nivel_aleatoriedad:     esAleatorio\n                              ? 'Alto — distribución compatible con azar'\n                              : 'Bajo — posible sesgo detectado',\n\n    // Baseline (nuevo — para comparar contra la IA)\n    baseline_tasa_acierto:          tasaBaselineAleatorio.toFixed(6),\n    baseline_aciertos_esperados_dia: aciertosEsperadosPorDia,\n    baseline_simulaciones:           SIMULACIONES\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5664,
+        -1216
+      ],
+      "id": "2750530c-0deb-4690-adab-2c4d4f842d57",
+      "name": "Setear EstadisticasLG"
+    },
+    {
+      "parameters": {
+        "url": "https://loteriadehoy.com/animalito/lottoactivo/estadisticas/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "es-ES,es;q=0.9"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "allowUnauthorizedCerts": false,
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -6560,
+        -1216
+      ],
+      "id": "e0923a7b-8cfd-4363-a5f3-50e67b59ac61",
+      "name": "Estadisticas LottoActivo1",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "chatId": "5907641608",
+        "text": "=📊 PREDICCIÓN LOTTO ACTIVO · IA 📊\n📅 {{ $now.format('yyyy-MM-dd HH:mm') }}\n\n═══════════════════════\n🎯 SECUENCIA PREDICHA\n═══════════════════════\n{{ Object.entries($json.comparacion_horaria).map(([h, v]) => (v.match ? '✅' : '⚠️') + ' ' + h + ': G31B=' + v.gemma31b + ' | G26B=' + v.gemma26b).join('\\n') }}\n\n📊 Coincidencias: {{ $json.coincidencias }}/{{ $json.de_total }}\n{{ $json.alerta }}\n\n═══════════════════════\n🤖 POR MODELO\n═══════════════════════\n\n🔷 {{ $json.resultados_por_modelo[0].modelo }} ({{ $json.resultados_por_modelo[0].confianza }}%)\n🕐 {{ Object.entries($json.resultados_por_modelo[0].secuencia).map(([h, n]) => h + ':' + n).join(' → ') }}\n🐘 Enjaulados: {{ $json.resultados_por_modelo[0].enjaulados.join(', ') }}\n💬 {{ $json.resultados_por_modelo[0].logica }}\n\n🔷 {{ $json.resultados_por_modelo[1].modelo }} ({{ $json.resultados_por_modelo[1].confianza }}%)\n🕐 {{ Object.entries($json.resultados_por_modelo[1].secuencia).map(([h, n]) => h + ':' + n).join(' → ') }}\n🐘 Enjaulados: {{ $json.resultados_por_modelo[1].enjaulados.join(', ') }}\n💬 {{ $json.resultados_por_modelo[1].logica }}\n\n═══════════════════════\n⚡ RESUMEN\n═══════════════════════\n🎯 Horas clave (Match): {{ $json.horas_match.join(', ') || 'Ninguna' }}\n📈 Confianza Promedio: {{ $json.confianza_promedio }}%\n\n⚠️ {{ $json.modelos_ok }}/2 modelos activos.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -4480,
+        -1216
+      ],
+      "id": "b76403f5-b822-48ef-8b0c-4c7b2eb727c9",
+      "name": "Enviar PrediccionLG",
+      "webhookId": "8e51b65a-28c6-4918-b292-8e07ac539bd7",
+      "credentials": {
+        "telegramApi": {
+          "id": "36DsrlrI13LQunxS",
+          "name": "LottoActivo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// Extraer predicciones desde mensaje de Telegram (Gemma 26B y Gemma 31B)\n// Entrada: el JSON del mensaje enviado por el bot\n// Salida: mismo formato que antes para Supabase\n// ============================================================\n\n// ── 1. Obtener el texto del mensaje ──\nconst inputData = $input.first().json;\nconst messageText = inputData.result?.text || inputData.text || '';\n\nif (!messageText) {\n  throw new Error('No se encontró texto del mensaje de Telegram');\n}\n\n// ── 2. Función para extraer datos de un modelo (Gemma 26B o Gemma 31B) ──\nfunction extraerModelo(texto, nombreModelo) {\n  // Escapar caracteres especiales para regex\n  const escapedNombre = nombreModelo.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n  // Buscar \"🔷 Gemma 26B (82%)\" o similar\n  const regexModelo = new RegExp(`🔷\\\\s*${escapedNombre}\\\\s*\\\\((\\\\d+)%\\\\)`, 'i');\n  const matchModelo = texto.match(regexModelo);\n  if (!matchModelo) return null;\n\n  const confianza = parseInt(matchModelo[1], 10);\n\n  // Extraer la línea de la secuencia: \"🕐 08AM:30 → 09AM:22 → ...\"\n  const secuenciaRegex = /🕐\\s+([\\d:AMPM]+:\\d+(?:\\s*→\\s*[\\d:AMPM]+:\\d+)*)/i;\n  const secuenciaMatch = texto.match(secuenciaRegex);\n  if (!secuenciaMatch) return null;\n\n  const secuenciaRaw = secuenciaMatch[1];\n  // Parsear \"08AM:30 → 09AM:22 → ...\"\n  const partes = secuenciaRaw.split(/\\s*→\\s*/);\n  const secuencia = {};\n  for (const parte of partes) {\n    const [hora, numero] = parte.split(':');\n    if (hora && numero !== undefined) {\n      secuencia[hora.trim()] = numero.trim();\n    }\n  }\n\n  // Extraer enjaulados: \"🐘 Enjaulados: 30, 8, 31, 0, 33, 18, 12\"\n  const enjauladosRegex = /🐘\\s*Enjaulados:\\s*([\\d,\\s]+)/i;\n  const enjauladosMatch = texto.match(enjauladosRegex);\n  let enjaulados = [];\n  if (enjauladosMatch) {\n    enjaulados = enjauladosMatch[1].split(',').map(s => s.trim()).filter(n => n);\n  }\n\n  return {\n    modelo: nombreModelo,\n    secuencia: secuencia,\n    enjaulados_usados: enjaulados,\n    confianza: confianza,\n    ok: true\n  };\n}\n\n// ── 3. Extraer ambos modelos (Gemma 26B y Gemma 31B) ──\nconst modelo26b = extraerModelo(messageText, 'Gemma 26B');\nconst modelo31b = extraerModelo(messageText, 'Gemma 31B');\n\nconst resultados = [];\nif (modelo26b) resultados.push(modelo26b);\nif (modelo31b) resultados.push(modelo31b);\n\nif (resultados.length === 0) {\n  throw new Error('No se pudieron extraer los modelos del mensaje');\n}\n\n// ── 4. Salida para Supabase ──\nconst now = new Date();\nconst venezuelaOffset = -4 * 60 * 60 * 1000; // UTC-4\nconst horaPrediccion = new Date(now.getTime() + venezuelaOffset)\n  .toISOString()\n  .slice(11, 16); // \"HH:MM\"\n\nreturn [{\n  json: {\n    hora_prediccion: horaPrediccion,\n    id_sorteo: Date.now(),\n    modelos: resultados   // Array con los dos modelos extraídos\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4256,
+        -1216
+      ],
+      "id": "98ce5ac9-0f14-4507-9903-6df3f8db04af",
+      "name": "Setear Datos a GuardarLG"
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -7008,
+        -1216
+      ],
+      "id": "9fc4ab93-8eeb-4828-82d2-0f7938d37bca",
+      "name": "Wait",
+      "webhookId": "158d16c8-dc95-4c63-b72f-b1c86baeb3f8",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemma-4-31b-it",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -5024,
+        -992
+      ],
+      "id": "fb563128-1be7-452f-84b0-a06303f6ffbf",
+      "name": "Google Gemini Chat Model1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "THioYG9LB2JU8Crg",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Eres un analista estadístico de Lotto Activo Venezuela. Tu objetivo es predecir la SECUENCIA COMPLETA de los 12 sorteos del próximo día analizando patrones en los datos históricos.\n\n═══════════════════════════════════════\nDATOS ESTADÍSTICOS ({{ $('Setear EstadisticasLG').item.json.total_registros }} sorteos · {{ $('Setear EstadisticasLG').item.json.fecha_inicio }} → {{ $('Setear EstadisticasLG').item.json.fecha_fin }})\n═══════════════════════════════════════\nFrecuencias (número:veces): {{ $('Setear EstadisticasLG').item.json.frecuencia_numeros }}\nTop 5 más frecuentes: {{ JSON.stringify($('Setear EstadisticasLG').item.json.top5_mas_frecuentes) }}\nBottom 5 menos frecuentes: {{ JSON.stringify($('Setear EstadisticasLG').item.json.top5_menos_frecuentes) }}\nNúmeros activos: {{ $('Setear EstadisticasLG').item.json.numeros_activos }} | Inexistentes: {{ JSON.stringify($('Setear EstadisticasLG').item.json.numeros_inexistentes) }}\nChi²: {{ $('Setear EstadisticasLG').item.json.chi_cuadrado }} (gl={{ $('Setear EstadisticasLG').item.json.chi_grados_libertad }}) → {{ $('Setear EstadisticasLG').item.json.nivel_aleatoriedad }}\n\n═══════════════════════════════════════\nREFERENCIA DE AZAR (BASELINE)\n═══════════════════════════════════════\nUna predicción completamente aleatoria acierta en promedio {{ $('Setear EstadisticasLG').item.json.baseline_aciertos_esperados_dia }} sorteos por día (tasa: {{ $('Setear EstadisticasLG').item.json.baseline_tasa_acierto }}, sobre {{ $('Setear EstadisticasLG').item.json.baseline_simulaciones }} simulaciones).\nTu predicción SOLO tiene valor si supera este umbral. Tenerlo presente no es opcional.\n\n═══════════════════════════════════════\nSERIE TEMPORAL (últimos 50 sorteos · orden: MÁS ANTIGUO → MÁS RECIENTE)\n═══════════════════════════════════════\n{{ $('Setear EstadisticasLG').item.json.ultimos_resultados }}\n\nNOTA: El ÚLTIMO número de esta lista es el sorteo más reciente (ocurrió justo antes de los sorteos que vas a predecir).\n\n═══════════════════════════════════════\nPARES CONSECUTIVOS — mismo día (transiciones frecuentes)\n═══════════════════════════════════════\n{{ $('Setear EstadisticasLG').item.json.pares_consecutivos }}\n\n═══════════════════════════════════════\nFRECUENCIA POR FRANJA HORARIA\n═══════════════════════════════════════\n{{ $('Setear EstadisticasLG').item.json.frecuencia_horaria }}\n\n═══════════════════════════════════════\nFRECUENCIA POR HORA EXACTA (top 3 histórico por slot)\n═══════════════════════════════════════\n{{ Object.entries($('Setear EstadisticasLG').item.json.frecuencia_hora_exacta).map(([h, arr]) => h + ': ' + arr.join(', ')).join(' | ') }}\n\n═══════════════════════════════════════\nENJAULADOS CRÍTICOS (>5 días sin salir — candidatos por presión estadística)\n═══════════════════════════════════════\n{{ $('Setear EstadisticasLG').item.json.enjaulados_criticos }}\n\nENJAULADOS COMPLETOS (todos los que llevan ≥1 día sin salir)\n{{ $('Setear EstadisticasLG').item.json.enjaulados_todos }}\n\n═══════════════════════════════════════\nJERARQUÍA DE ANÁLISIS — aplica en este orden estricto\n═══════════════════════════════════════\n\n0. ANCLA TEMPORAL: Toma el ÚLTIMO número de la SERIE TEMPORAL. Ese es el sorteo más reciente. Escribe explícitamente en tu razonamiento: \"El último sorteo fue X\". Usa los 3 últimos números de la serie como contexto de inercia.\n\n1. HORA EXACTA (prioridad máxima): Para cada slot horario (08AM … 07PM) asigna primero el número con mayor frecuencia histórica en ESA hora exacta, según la tabla FRECUENCIA POR HORA EXACTA. Este es tu punto de partida más sólido.\n\n2. ENJAULADOS CRÍTICOS: De la lista de enjaulados con >5 días, selecciona 3 a 5 candidatos. Sústituyelos en los slots donde el número de hora exacta tenga frecuencia baja o donde el enjaulado coincida con la franja horaria correcta.\n\n3. PARES CONSECUTIVOS: Revisa la secuencia preliminar. Si el número asignado al slot N aparece como origen de un par fuerte (X->Y con ≥3x), ajusta el slot N+1 a Y, siempre que ambos slots sean del mismo día.\n\n4. VALIDACIÓN FINAL: Antes de cerrar el JSON, verifica que tu secuencia tenga al menos {{ $('Setear EstadisticasLG').item.json.baseline_aciertos_esperados_dia }} aciertos esperados. Si todos tus números son de baja frecuencia histórica y ninguno aparece en los top3 por hora, reconsidera.\n\n═══════════════════════════════════════\nFORMATO DE SALIDA ESTRICTO\n═══════════════════════════════════════\nResponde ÚNICAMENTE con un objeto JSON válido. Sin bloques de código (```json), sin saludos, sin texto adicional.\nTODOS los números en \"secuencia\" y \"enjaulados_usados\" deben ser Strings (entre comillas) para preservar el formato de \"00\".\n\n{\n  \"razonamiento_paso_a_paso\": \"El último sorteo fue X. [Describe inercia, selección por hora exacta, enjaulados elegidos y ajustes Markov]\",\n  \"secuencia\": {\n    \"08AM\": \"0\",\n    \"09AM\": \"22\",\n    \"10AM\": \"32\",\n    \"11AM\": \"17\",\n    \"12PM\": \"1\",\n    \"01PM\": \"31\",\n    \"02PM\": \"27\",\n    \"03PM\": \"25\",\n    \"04PM\": \"10\",\n    \"05PM\": \"25\",\n    \"06PM\": \"18\",\n    \"07PM\": \"26\"\n  },\n  \"enjaulados_usados\": [\"0\", \"31\", \"18\"],\n  \"confianza\": 0,\n  \"logica\": \"1 línea con el razonamiento principal\"\n}\n\n",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -5088,
+        -1216
+      ],
+      "id": "791e8c7b-8003-4884-a8f6-8159f6f3c66c",
+      "name": "Gemma 31B"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://loteriadehoy.com/animalito/lottoactivo/resultados/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "es-ES,es;q=0.9"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "fecha",
+              "value": "={{ $json.fecha_busqueda }}"
+            }
+          ]
+        },
+        "options": {
+          "allowUnauthorizedCerts": false,
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -6112,
+        -1216
+      ],
+      "id": "9169c24d-2b1d-4109-8d27-ad4678bc2af5",
+      "name": "Extraer Lotto Activo",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "Lotto Activo"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -6784,
+        -1216
+      ],
+      "id": "98ae26aa-2fd6-4343-b54c-77cf56b60343",
+      "name": "Tabla Lotto Activo",
+      "executeOnce": false,
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "jPck2vhQNZ1XZsTw",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "Lotto Activo",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "Hora Prediccion",
+              "fieldValue": "={{ $now.setZone('America/Caracas').toFormat('hh:mm a') }}"
+            },
+            {
+              "fieldId": "Fecha Prediccion",
+              "fieldValue": "={{ $now.setZone('America/Caracas').toFormat('yyyy-MM-dd') }}"
+            },
+            {
+              "fieldId": "Gemma 26B",
+              "fieldValue": "={{ $json.modelos[0].secuencia }}"
+            },
+            {
+              "fieldId": "Gemma 31B",
+              "fieldValue": "={{ $json.modelos[1].secuencia }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -4032,
+        -1216
+      ],
+      "id": "64d67263-5f8e-4f9a-a8e0-3335b114a666",
+      "name": "Tabla LA",
+      "credentials": {
+        "supabaseApi": {
+          "id": "jPck2vhQNZ1XZsTw",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const dias = 90; \nconst resultados = [];\n\n// 1. Obtenemos la fecha actual del servidor (AWS Europa)\nconst ahora = new Date();\n\n// 2. Ajuste para Venezuela (GMT-4)\n// Calculamos la diferencia: Si el servidor está en UTC, restamos 4 horas.\n// Para ir a la segura, usamos el offset de minutos.\nconst offsetVenezuela = -4; \nconst fechaLocal = new Date(ahora.getTime() + (offsetVenezuela * 60 * 60 * 1000));\n\nfor (let i = 0; i < dias; i++) {\n  const f = new Date(fechaLocal);\n  f.setDate(fechaLocal.getDate() - i);\n  \n  // Formateo manual YYYY-MM-DD para evitar desfases de .toISOString()\n  const año = f.getUTCFullYear();\n  const mes = String(f.getUTCMonth() + 1).padStart(2, '0');\n  const dia = String(f.getUTCDate()).padStart(2, '0');\n  const fechaStr = `${año}-${mes}-${dia}`;\n  \n  resultados.push({\n    json: {\n      fecha_busqueda: fechaStr\n    }\n  });\n}\n\nreturn resultados;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6336,
+        -1216
+      ],
+      "id": "d740fdf3-2ef2-4696-b829-380f553d3158",
+      "name": "Frecuencia HorariaLG"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ════════════════════════════════════════════════\n// COMPARAR MODELOS — Gemma 26B vs Gemma 31B\n// ════════════════════════════════════════════════\n\nconst HORAS = [\"08AM\",\"09AM\",\"10AM\",\"11AM\",\"12PM\",\"01PM\",\"02PM\",\"03PM\",\"04PM\",\"05PM\",\"06PM\",\"07PM\"];\n\n// ── 1. Función para limpiar y parsear el JSON que devuelve Gemma ──\nfunction parsearRespuestaGemma(texto) {\n  if (!texto || typeof texto !== 'string') return null;\n  try {\n    let limpio = texto\n      .replace(/<think>[\\s\\S]*?<\\/think>/gi, '')  // quita bloques <think>\n      .replace(/```json\\s*/gi, '')                 // quita ```json\n      .replace(/```\\s*/gi, '')                     // quita ```\n      .trim();\n\n    const inicio = limpio.indexOf('{');\n    if (inicio === -1) return { error: 'No se encontró JSON' };\n\n    // Encuentra el cierre correcto del objeto raíz\n    let nivel = 0, fin = -1;\n    for (let i = inicio; i < limpio.length; i++) {\n      if (limpio[i] === '{') nivel++;\n      if (limpio[i] === '}') nivel--;\n      if (nivel === 0) { fin = i; break; }\n    }\n    if (fin === -1) return { error: 'JSON incompleto' };\n\n    limpio = limpio.substring(inicio, fin + 1)\n      .replace(/:\\s*NaN/g, ': null')\n      .replace(/,\\s*}/g, '}')\n      .replace(/,\\s*]/g, ']');\n\n    return JSON.parse(limpio);\n\n  } catch (e) {\n    return { error: 'Parse fallido: ' + e.message, raw: texto.substring(0, 300) };\n  }\n}\n\n// ── 2. Normalizar confianza (0.82 → 82, 82 → 82) ──\nfunction normalizarConfianza(valor) {\n  if (valor === null || valor === undefined) return 0;\n  const n = parseFloat(valor);\n  return isNaN(n) ? 0 : (n <= 1 ? Math.round(n * 100) : Math.round(n));\n}\n\n// ── 3. Extraer y normalizar secuencia (todos los valores a String) ──\nfunction extraerSecuencia(modelo) {\n  if (!modelo || modelo.error || !modelo.secuencia) return null;\n  const sec = {};\n  for (const [hora, valor] of Object.entries(modelo.secuencia)) {\n    sec[hora] = String(valor).trim();\n  }\n  return sec;\n}\n\n// ── 4. Obtener textos de respuesta de cada modelo ──\nconst texto26b = $('Gemma 26B').item.json.text  ?? $('Gemma 26B').item.json.output ?? '';\nconst texto31b = $('Gemma 31B').item.json.text  ?? $('Gemma 31B').item.json.output ?? '';\n\nconst parsed26b = parsearRespuestaGemma(texto26b);\nconst parsed31b = parsearRespuestaGemma(texto31b);\n\n// ── 5. Armar objeto por modelo ──\nfunction armarModelo(parsed, nombre) {\n  if (!parsed || parsed.error) {\n    return {\n      modelo:    nombre,\n      ok:        false,\n      error:     parsed?.error ?? 'Sin datos',\n      raw:       parsed?.raw   ?? ''\n    };\n  }\n  return {\n    modelo:          nombre,\n    ok:              true,\n    secuencia:       extraerSecuencia(parsed)  ?? {},\n    enjaulados:      (parsed.enjaulados_usados ?? []).map(String),\n    confianza:       normalizarConfianza(parsed.confianza),\n    logica:          parsed.logica             ?? '',\n    razonamiento:    parsed.razonamiento_paso_a_paso ?? ''\n  };\n}\n\nconst modelo26b = armarModelo(parsed26b, 'Gemma 26B');\nconst modelo31b = armarModelo(parsed31b, 'Gemma 31B');\n\n// ── 6. Comparación hora a hora ──\nlet coincidencias = 0;\nconst comparacion = {};\n\nHORAS.forEach(h => {\n  const v26 = modelo26b.secuencia?.[h] ?? null;\n  const v31 = modelo31b.secuencia?.[h] ?? null;\n  const match = v26 !== null && v31 !== null && v26 === v31;\n  if (match) coincidencias++;\n  comparacion[h] = {\n    gemma26b: v26 ?? '-',\n    gemma31b: v31 ?? '-',\n    match\n  };\n});\n\n// ── 7. Horas donde coinciden (lista limpia) ──\nconst horasMatch = HORAS.filter(h => comparacion[h].match);\n\n// ── 8. Secuencia consenso ──\n// Para cada hora: si coinciden → ese número\n// Si no coinciden → el del modelo con mayor confianza\nconst modeloLider = modelo26b.confianza >= modelo31b.confianza ? modelo26b : modelo31b;\n\nconst secuenciaConsenso = {};\nHORAS.forEach(h => {\n  secuenciaConsenso[h] = comparacion[h].match\n    ? comparacion[h].gemma26b              // ambos de acuerdo\n    : (modeloLider.secuencia?.[h] ?? '-'); // gana el más confiado\n});\n\n// ── 9. Confianza promedio (solo modelos que respondieron OK) ──\nconst modelosOK = [modelo26b, modelo31b].filter(m => m.ok);\nconst confianzaPromedio = modelosOK.length > 0\n  ? Math.round(modelosOK.reduce((s, m) => s + m.confianza, 0) / modelosOK.length)\n  : 0;\n\n// ── 10. Alerta de coincidencia ──\nconst alerta =\n  coincidencias >= 8 ? `🚨 ALTA COINCIDENCIA: ${coincidencias}/12` :\n  coincidencias >= 4 ? `🔥 COINCIDENCIA PARCIAL: ${coincidencias}/12` :\n                       `⚖️ Modelos divergen: ${coincidencias}/12`;\n\n// ── 11. Enjaulados usados por ambos (intersección) ──\nconst enjauladosComunes = modelo26b.enjaulados.filter(n =>\n  modelo31b.enjaulados.includes(n)\n);\n\n// ════════════════════════════════════════════════\n// OUTPUT\n// ════════════════════════════════════════════════\nreturn [{\n  json: {\n    // Resumen ejecutivo\n    coincidencias,\n    de_total:           12,\n    horas_match:        horasMatch,\n    confianza_promedio: confianzaPromedio,\n    alerta,\n    modelos_ok:         modelosOK.length,\n\n    // Secuencia consenso (la que se envía a Telegram)\n    secuencia_consenso: secuenciaConsenso,\n    modelo_lider:       modeloLider.modelo,\n\n    // Comparación hora a hora\n    comparacion_horaria: comparacion,\n\n    // Detalle por modelo\n    resultados_por_modelo: [modelo26b, modelo31b],\n\n    // Enjaulados que ambos eligieron\n    enjaulados_comunes: enjauladosComunes,\n\n    // Flags útiles para nodos siguientes\n    alta_coincidencia:  coincidencias >= 8,\n    divergencia_total:  coincidencias === 0,\n    ambos_fallaron:     modelosOK.length === 0\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4736,
+        -1216
+      ],
+      "id": "136fbc51-c5cb-410a-badd-839b113cf723",
+      "name": "Comparar Modelos"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Eres un analista estadístico de Lotto Activo Venezuela. Tu objetivo es predecir la SECUENCIA COMPLETA de los 12 sorteos del próximo día analizando patrones en los datos históricos.\n\n═══════════════════════════════════════\nDATOS ESTADÍSTICOS ({{ $('Setear EstadisticasLG').item.json.total_registros }} sorteos · {{ $('Setear EstadisticasLG').item.json.fecha_inicio }} → {{ $('Setear EstadisticasLG').item.json.fecha_fin }})\n═══════════════════════════════════════\nFrecuencias (número:veces): {{ $('Setear EstadisticasLG').item.json.frecuencia_numeros }}\nTop 5 más frecuentes: {{ JSON.stringify($('Setear EstadisticasLG').item.json.top5_mas_frecuentes) }}\nBottom 5 menos frecuentes: {{ JSON.stringify($('Setear EstadisticasLG').item.json.top5_menos_frecuentes) }}\nNúmeros activos: {{ $('Setear EstadisticasLG').item.json.numeros_activos }} | Inexistentes: {{ JSON.stringify($('Setear EstadisticasLG').item.json.numeros_inexistentes) }}\nChi²: {{ $('Setear EstadisticasLG').item.json.chi_cuadrado }} (gl={{ $('Setear EstadisticasLG').item.json.chi_grados_libertad }}) → {{ $('Setear EstadisticasLG').item.json.nivel_aleatoriedad }}\n\n═══════════════════════════════════════\nREFERENCIA DE AZAR (BASELINE)\n═══════════════════════════════════════\nUna predicción completamente aleatoria acierta en promedio {{ $('Setear EstadisticasLG').item.json.baseline_aciertos_esperados_dia }} sorteos por día (tasa: {{ $('Setear EstadisticasLG').item.json.baseline_tasa_acierto }}, sobre {{ $('Setear EstadisticasLG').item.json.baseline_simulaciones }} simulaciones).\nTu predicción SOLO tiene valor si supera este umbral. Tenerlo presente no es opcional.\n\n═══════════════════════════════════════\nSERIE TEMPORAL (últimos 50 sorteos · orden: MÁS ANTIGUO → MÁS RECIENTE)\n═══════════════════════════════════════\n{{ $('Setear EstadisticasLG').item.json.ultimos_resultados }}\n\nNOTA: El ÚLTIMO número de esta lista es el sorteo más reciente (ocurrió justo antes de los sorteos que vas a predecir).\n\n═══════════════════════════════════════\nPARES CONSECUTIVOS — mismo día (transiciones frecuentes)\n═══════════════════════════════════════\n{{ $('Setear EstadisticasLG').item.json.pares_consecutivos }}\n\n═══════════════════════════════════════\nFRECUENCIA POR FRANJA HORARIA\n═══════════════════════════════════════\n{{ $('Setear EstadisticasLG').item.json.frecuencia_horaria }}\n\n═══════════════════════════════════════\nFRECUENCIA POR HORA EXACTA (top 3 histórico por slot)\n═══════════════════════════════════════\n{{ Object.entries($('Setear EstadisticasLG').item.json.frecuencia_hora_exacta).map(([h, arr]) => h + ': ' + arr.join(', ')).join(' | ') }}\n\n═══════════════════════════════════════\nENJAULADOS CRÍTICOS (>5 días sin salir — candidatos por presión estadística)\n═══════════════════════════════════════\n{{ $('Setear EstadisticasLG').item.json.enjaulados_criticos }}\n\nENJAULADOS COMPLETOS (todos los que llevan ≥1 día sin salir)\n{{ $('Setear EstadisticasLG').item.json.enjaulados_todos }}\n\n═══════════════════════════════════════\nJERARQUÍA DE ANÁLISIS — aplica en este orden estricto\n═══════════════════════════════════════\n\n0. ANCLA TEMPORAL: Toma el ÚLTIMO número de la SERIE TEMPORAL. Ese es el sorteo más reciente. Escribe explícitamente en tu razonamiento: \"El último sorteo fue X\". Usa los 3 últimos números de la serie como contexto de inercia.\n\n1. HORA EXACTA (prioridad máxima): Para cada slot horario (08AM … 07PM) asigna primero el número con mayor frecuencia histórica en ESA hora exacta, según la tabla FRECUENCIA POR HORA EXACTA. Este es tu punto de partida más sólido.\n\n2. ENJAULADOS CRÍTICOS: De la lista de enjaulados con >5 días, selecciona 3 a 5 candidatos. Sústituyelos en los slots donde el número de hora exacta tenga frecuencia baja o donde el enjaulado coincida con la franja horaria correcta.\n\n3. PARES CONSECUTIVOS: Revisa la secuencia preliminar. Si el número asignado al slot N aparece como origen de un par fuerte (X->Y con ≥3x), ajusta el slot N+1 a Y, siempre que ambos slots sean del mismo día.\n\n4. VALIDACIÓN FINAL: Antes de cerrar el JSON, verifica que tu secuencia tenga al menos {{ $('Setear EstadisticasLG').item.json.baseline_aciertos_esperados_dia }} aciertos esperados. Si todos tus números son de baja frecuencia histórica y ninguno aparece en los top3 por hora, reconsidera.\n\n═══════════════════════════════════════\nFORMATO DE SALIDA ESTRICTO\n═══════════════════════════════════════\nResponde ÚNICAMENTE con un objeto JSON válido. Sin bloques de código (```json), sin saludos, sin texto adicional.\nTODOS los números en \"secuencia\" y \"enjaulados_usados\" deben ser Strings (entre comillas) para preservar el formato de \"00\".\n\n{\n  \"razonamiento_paso_a_paso\": \"El último sorteo fue X. [Describe inercia, selección por hora exacta, enjaulados elegidos y ajustes Markov]\",\n  \"secuencia\": {\n    \"08AM\": \"0\",\n    \"09AM\": \"22\",\n    \"10AM\": \"32\",\n    \"11AM\": \"17\",\n    \"12PM\": \"1\",\n    \"01PM\": \"31\",\n    \"02PM\": \"27\",\n    \"03PM\": \"25\",\n    \"04PM\": \"10\",\n    \"05PM\": \"25\",\n    \"06PM\": \"18\",\n    \"07PM\": \"26\"\n  },\n  \"enjaulados_usados\": [\"0\", \"31\", \"18\"],\n  \"confianza\": 0,\n  \"logica\": \"1 línea con el razonamiento principal\"\n}\n\n",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -5440,
+        -1216
+      ],
+      "id": "90de71f7-9910-4c2e-9d0b-d7d2c1d13a82",
+      "name": "Gemma 26B"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemma-4-26b-a4b-it",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -5376,
+        -992
+      ],
+      "id": "134349a1-0026-4b64-a94b-8a58df1abab4",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "THioYG9LB2JU8Crg",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -7264,
+        -1216
+      ],
+      "id": "13bb7ceb-d3d2-40bf-b17e-4fc83d50b159",
+      "name": "When Executed by Another Workflow"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Setear DatosLG": {
+      "main": [
+        [
+          {
+            "node": "Setear EstadisticasLG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Setear EstadisticasLG": {
+      "main": [
+        [
+          {
+            "node": "Gemma 26B",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Estadisticas LottoActivo1": {
+      "main": [
+        [
+          {
+            "node": "Frecuencia HorariaLG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar PrediccionLG": {
+      "main": [
+        [
+          {
+            "node": "Setear Datos a GuardarLG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Setear Datos a GuardarLG": {
+      "main": [
+        [
+          {
+            "node": "Tabla LA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Tabla Lotto Activo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Gemma 31B",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemma 31B": {
+      "main": [
+        [
+          {
+            "node": "Comparar Modelos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Lotto Activo": {
+      "main": [
+        [
+          {
+            "node": "Setear DatosLG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tabla Lotto Activo": {
+      "main": [
+        [
+          {
+            "node": "Estadisticas LottoActivo1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Frecuencia HorariaLG": {
+      "main": [
+        [
+          {
+            "node": "Extraer Lotto Activo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Comparar Modelos": {
+      "main": [
+        [
+          {
+            "node": "Enviar PrediccionLG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemma 26B": {
+      "main": [
+        [
+          {
+            "node": "Gemma 31B",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Gemma 26B",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "7fb1da8c-576a-4fb3-a550-420b15c085f6",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e8fb98e03063dba1b0801be881001ee9e700be6fce2fcaef942fe54b1819ca7c"
+  },
+  "id": "y1zerL8Wnkxjeis2",
+  "tags": []
+}
